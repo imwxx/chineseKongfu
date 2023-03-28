@@ -2,6 +2,7 @@ package logic
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -102,24 +103,30 @@ func (i *kongfu) AddHostToIpset(ipsetname, ipsettype string, hosts []string) err
 	}
 
 	for _, host := range hosts {
-		_, err := exec.Command("ipset", "add", ipsetname, host).Output()
+		out, err := exec.Command("ipset", "add", ipsetname, host).Output()
 		if err != nil {
-			return err
+			return errors.New(string(out))
 		}
 	}
 	return nil
 }
 
 func (i *kongfu) CreateRoute(lookup int64, wan string) error {
-	commands := []string{
-		"uci add network route",
-		fmt.Sprintf(`uci set network.@route[-1].target = %s`, "0.0.0.0/0"),
-		fmt.Sprintf(`uci set network.@route[-1].table = %d`, lookup),
-		fmt.Sprintf(`uci set network.@route[-1].interface = %s`, wan),
-		"uci commit network",
+	var commands [][]string
+
+	commandsStr := []string{
+		"add network route",
+		fmt.Sprintf(`set network.@route[-1].target=%s`, "0.0.0.0/0"),
+		fmt.Sprintf(`set network.@route[-1].table=%d`, lookup),
+		fmt.Sprintf(`set network.@route[-1].interface=%s`, wan),
+		"commit network",
+	}
+	for _, cstr := range commandsStr {
+		args := strings.Split(cstr, " ")
+		commands = append(commands, args)
 	}
 	for _, command := range commands {
-		if _, err := exec.Command(command).Output(); err != nil {
+		if _, err := exec.Command("uci", command...).Output(); err != nil {
 			return err
 		}
 	}
@@ -128,14 +135,20 @@ func (i *kongfu) CreateRoute(lookup int64, wan string) error {
 }
 
 func (i *kongfu) CreateRule(lookup, mark int64) error {
-	commands := []string{
-		"uci add network rule",
-		fmt.Sprintf(`uci set network.@rule[-1].mark = %#x`, mark),
-		fmt.Sprintf(`uci set network.@rule[-1].lookup = %d`, lookup),
-		"uci commit network",
+	var commands [][]string
+	commandsStr := []string{
+		"add network rule",
+		fmt.Sprintf(`set network.@rule[-1].mark=%#x`, mark),
+		fmt.Sprintf(`set network.@rule[-1].lookup=%d`, lookup),
+		"commit network",
 	}
+	for _, cstr := range commandsStr {
+		args := strings.Split(cstr, " ")
+		commands = append(commands, args)
+	}
+
 	for _, command := range commands {
-		if _, err := exec.Command(command).Output(); err != nil {
+		if _, err := exec.Command("uci", command...).Output(); err != nil {
 			return err
 		}
 	}
@@ -295,15 +308,20 @@ func (i *kongfu) CheckIptables(ipsetname string) error {
 
 func (i *kongfu) CreateIptables(ipsetname string, mark int64) error {
 	if err := i.CheckIptables(ipsetname); err != nil {
-		iptables := []string{
-			fmt.Sprintf(`/usr/sbin/iptables -t mangle -N %s`, ipsetname),
-			fmt.Sprintf(`/usr/sbin/iptables -t mangle -I PREROUTING -m set --match-set %s dst -j MARK --set-mark %d`, ipsetname, mark),
-			fmt.Sprintf(`/usr/sbin/iptables -t mangle -A OUTPUT -j %s`, ipsetname),
-			fmt.Sprintf(`/usr/sbin/iptables -t mangle -A fwmark -m set --match-set %s  dst -j MARK --set-mark %d`, ipsetname, mark),
-			fmt.Sprintf(`/usr/sbin/iptables -t nat -A POSTROUTING -m mark --mark %#x -j MASQUERADE`, mark),
+		var iptables [][]string
+		iptablesStr := []string{
+			fmt.Sprintf(`-t mangle -N %s`, ipsetname),
+			fmt.Sprintf(`-t mangle -I PREROUTING -m set --match-set %s dst -j MARK --set-mark %d`, ipsetname, mark),
+			fmt.Sprintf(`-t mangle -A OUTPUT -j %s`, ipsetname),
+			fmt.Sprintf(`-t mangle -A fwmark -m set --match-set %s  dst -j MARK --set-mark %d`, ipsetname, mark),
+			fmt.Sprintf(`-t nat -A POSTROUTING -m mark --mark %#x -j MASQUERADE`, mark),
+		}
+		for _, cstr := range iptablesStr {
+			args := strings.Split(cstr, " ")
+			iptables = append(iptables, args)
 		}
 		for _, tables := range iptables {
-			_, err := exec.Command(tables).Output()
+			_, err := exec.Command("/usr/sbin/iptables", tables...).Output()
 			if err != nil {
 				return err
 			}

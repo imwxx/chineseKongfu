@@ -53,7 +53,7 @@ func (i *run) Start() {
 	c := logic.NewConfig(i.configName, i.configs)
 	configs, err := c.LoadConfig()
 	if err != nil {
-		i.stdErr.Error(err.Error())
+		i.stdErr.Errorf(`loadconfig %s/%s, error: %s`, i.configs, i.configName, err.Error())
 		return
 	}
 
@@ -61,37 +61,40 @@ func (i *run) Start() {
 		k := logic.NewKongFu(config)
 		if config.USEIPSET {
 			if err := k.CreateIPsetInRttable(config.IPSETNAME, config.RTTABLES, config.LOOKUP); err == nil {
-				i.stdOut.Infof(`add ipset config "%d %s" into %s successed`, config.LOOKUP, config.IPSETNAME, config.RTTABLES)
+				i.stdOut.Infof(`step 1: add ipset config "%d %s" into %s successed`, config.LOOKUP, config.IPSETNAME, config.RTTABLES)
 			} else {
-				i.stdErr.Error(err.Error())
+				i.stdOut.Errorf(`step 1: add ipset config "%d %s" into %s error: %s`, config.LOOKUP, config.IPSETNAME, config.RTTABLES, err.Error())
 			}
 			if err := k.CreateIpset(config.IPSETNAME, config.IPSETTYPE); err == nil {
-				i.stdOut.Infof(`ipset create %s %s, successed`, config.IPSETNAME, config.RTTABLES)
+				i.stdOut.Infof(`step 2: create ipset SETNAME: %s, successed`, config.IPSETNAME)
 			} else {
-				i.stdErr.Error(err.Error())
+				i.stdErr.Errorf(`step 2: create ipset SETNAME: %s, error: %s`, config.IPSETNAME, err.Error())
 			}
 
 			if err := k.CreateRoute(config.LOOKUP, config.INTERFACE); err == nil {
-				i.stdOut.Infof(`create route successed: target: 0.0.0.0/0, table: %d, interface: %s`, config.LOOKUP, config.INTERFACE)
+				i.stdOut.Infof(`step 3: create route successed: target: 0.0.0.0/0, table: %d, interface: %s`, config.LOOKUP, config.INTERFACE)
 				if err := k.CreateRule(config.LOOKUP, config.MARK); err == nil {
-
+					i.stdOut.Infof(`step 4: create rule: mark: %d, lookup: %d, successed`, config.MARK, config.LOOKUP)
 				} else {
-					i.stdErr.Error(err.Error())
+					i.stdOut.Errorf(`step 4: create rule: mark: %d, lookup: %d, error: %s`, config.MARK, config.LOOKUP, err.Error())
 				}
 			} else {
-				i.stdErr.Error(err.Error())
+				i.stdOut.Errorf(`step 3: create route: target: 0.0.0.0/0, table: %d, interface: %s, error: %s`, config.LOOKUP, config.INTERFACE, err.Error())
 			}
 			if len(config.HOSTS) != 0 {
 				if err := k.AddHostToIpset(config.IPSETNAME, config.IPSETTYPE, config.HOSTS); err == nil {
-					i.stdOut.Infof(`add %d hosts into ipset: %s successed`, config.IPSETNAME, len(config.HOSTS))
+					i.stdOut.Infof(`step 5: add %d hosts into ipset: %s successed`, len(config.HOSTS), config.IPSETNAME)
 				} else {
-					i.stdErr.Error(err.Error())
+					i.stdOut.Errorf(`step 5: add %d hosts into ipset: %s, error: %s`, len(config.HOSTS), config.IPSETNAME, err.Error())
 				}
 			}
 		}
 
 		if err := k.CreateIptables(config.IPSETNAME, config.MARK); err != nil {
-			i.stdErr.Error(err.Error())
+			i.stdErr.Errorf(`step 6: create iptables error: %s`, err.Error())
+		} else {
+			i.stdOut.Info("step 6: create iptables successed")
+
 		}
 
 		if config.UPDATE {
@@ -116,7 +119,7 @@ func (i *run) Start() {
 				}
 			} else {
 				if err := i.DomainsList(config, k); err != nil {
-					i.stdErr.Error(err.Error())
+					i.stdErr.Errorf(`domains file saved failed, error: %s`, err.Error())
 				} else {
 					i.stdOut.Info("domains file saved successed")
 				}

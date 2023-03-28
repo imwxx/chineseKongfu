@@ -71,7 +71,7 @@ func (i *config) LoadConfig() ([]model.KONGFUGROUP, error) {
 					}
 				case "MARK":
 					mark, err := strconv.Atoi(val[0])
-					if err != nil {
+					if err == nil {
 						config.MARK = int64(mark)
 					}
 				case "INTERFACE":
