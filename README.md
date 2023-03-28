@@ -1,8 +1,9 @@
-# 1.koiAliddns
+# 1.chineseKongfu
 
 - **What**: Used to configure domain name resolution policy routing, config was suitable for OpenWRT
 
 # 2.How
+- **^_^**: This application depends on dnsmasq(with-ipset), ipset, iproute, iptables
 ## 2.1.config
 ```
 #create config like this
