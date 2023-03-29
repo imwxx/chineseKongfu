@@ -60,7 +60,6 @@ func (i *kongfu) CreateIPsetInRttable(ipsetname, rttables string, lookup int64) 
 	i.Lock()
 	defer i.Unlock()
 
-	var err error
 	if _, err := os.Stat(rttables); os.IsNotExist(err) {
 		return err
 	}
@@ -71,27 +70,27 @@ func (i *kongfu) CreateIPsetInRttable(ipsetname, rttables string, lookup int64) 
 		if ferr != nil {
 			return ferr
 		}
-		_, err = io.WriteString(f, str+"\n")
+		_, err := io.WriteString(f, str+"\n")
 		if err != nil {
 			return err
 		}
 	}
-	return err
+	return nil
 }
 
 func (i *kongfu) ChectIpset(ipsetname string) error {
-	_, err := exec.Command("ipset", "list", ipsetname).Output()
+	out, err := exec.Command("ipset", "list", ipsetname).Output()
 	if err != nil {
-		return err
+		return errors.New(string(out))
 	}
 	return nil
 }
 
 func (i *kongfu) CreateIpset(ipsetname, ipsettype string) error {
 	if err := i.ChectIpset(ipsetname); err != nil {
-		_, err := exec.Command("ipset", "create", ipsetname, ipsettype).Output()
+		out, err := exec.Command("ipset", "create", ipsetname, ipsettype).Output()
 		if err != nil {
-			return err
+			return errors.New(string(out))
 		}
 	}
 	return nil
@@ -111,6 +110,24 @@ func (i *kongfu) AddHostToIpset(ipsetname, ipsettype string, hosts []string) err
 	return nil
 }
 
+func (i *kongfu) CheckRoute(lookup int64) error {
+	c := fmt.Sprintf(`grep "option table '%d'" /etc/config/network`, lookup)
+	_, err := exec.Command("sh", "-c", c).Output()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (i *kongfu) CheckRule(lookup int64) error {
+	c := fmt.Sprintf(`grep "option lookup '%d'" /etc/config/network`, lookup)
+	_, err := exec.Command("sh", "-c", c).Output()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (i *kongfu) CreateRoute(lookup int64, wan string) error {
 	var commands [][]string
 
@@ -125,9 +142,11 @@ func (i *kongfu) CreateRoute(lookup int64, wan string) error {
 		args := strings.Split(cstr, " ")
 		commands = append(commands, args)
 	}
-	for _, command := range commands {
-		if _, err := exec.Command("uci", command...).Output(); err != nil {
-			return err
+	if err := i.CheckRoute(lookup); err != nil {
+		for _, command := range commands {
+			if _, err := exec.Command("uci", command...).Output(); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -146,13 +165,17 @@ func (i *kongfu) CreateRule(lookup, mark int64) error {
 		args := strings.Split(cstr, " ")
 		commands = append(commands, args)
 	}
-
-	for _, command := range commands {
-		if _, err := exec.Command("uci", command...).Output(); err != nil {
-			return err
+	if err := i.CheckRule(lookup); err != nil {
+		for _, command := range commands {
+			if _, err := exec.Command("uci", command...).Output(); err != nil {
+				return err
+			}
 		}
-	}
+		if _, err := exec.Command("sh", "-c", "/etc/init.d/network restart").Output(); err != nil {
+			return errors.New("/etc/init.d/network restart error")
+		}
 
+	}
 	return nil
 }
 
@@ -255,6 +278,19 @@ func (i *kongfu) WriteDomainsList(raw []string, fileName, dnsmasqd, dnsserver st
 	var f *os.File
 	file := fmt.Sprintf(`%s/%s.conf`, dnsmasqd, fileName)
 
+	if !i.Exists(dnsmasqd) {
+		if err := os.Mkdir(dnsmasqd, 0755); err != nil {
+			return err
+		}
+		if f, err := os.OpenFile("/etc/dnsmasq.conf", os.O_APPEND|os.O_WRONLY, os.ModeAppend); err != nil {
+			return err
+		} else {
+			if _, err = io.WriteString(f, "conf-dir = /etc/dnsmasq.d"+"\n"); err != nil {
+				return err
+			}
+		}
+
+	}
 	if i.Exists(file) {
 		f, err = os.OpenFile(file, os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0666)
 		if err != nil {
@@ -308,24 +344,32 @@ func (i *kongfu) CheckIptables(ipsetname string) error {
 
 func (i *kongfu) CreateIptables(ipsetname string, mark int64) error {
 	if err := i.CheckIptables(ipsetname); err != nil {
-		var iptables [][]string
-		iptablesStr := []string{
-			fmt.Sprintf(`-t mangle -N %s`, ipsetname),
-			fmt.Sprintf(`-t mangle -I PREROUTING -m set --match-set %s dst -j MARK --set-mark %d`, ipsetname, mark),
-			fmt.Sprintf(`-t mangle -A OUTPUT -j %s`, ipsetname),
-			fmt.Sprintf(`-t mangle -A fwmark -m set --match-set %s  dst -j MARK --set-mark %d`, ipsetname, mark),
-			fmt.Sprintf(`-t nat -A POSTROUTING -m mark --mark %#x -j MASQUERADE`, mark),
+		f, err := os.OpenFile("/etc/firewall.user", os.O_APPEND|os.O_WRONLY, os.ModeAppend)
+		if err != nil {
+			return err
 		}
-		for _, cstr := range iptablesStr {
-			args := strings.Split(cstr, " ")
-			iptables = append(iptables, args)
+		defer f.Close()
+
+		iptables := []string{
+			fmt.Sprintf(`iptables -t mangle -N %s`, ipsetname),
+			fmt.Sprintf(`iptables -t mangle -I PREROUTING -m set --match-set %s dst -j MARK --set-mark %d`, ipsetname, mark),
+			fmt.Sprintf(`iptables -t mangle -A OUTPUT -j %s`, ipsetname),
+			fmt.Sprintf(`iptables -t mangle -A %s -m set --match-set %s dst -j MARK --set-mark %d`, ipsetname, ipsetname, mark),
+			fmt.Sprintf(`iptables -t nat -A POSTROUTING -m mark --mark %#x -j MASQUERADE`, mark),
 		}
-		for _, tables := range iptables {
-			_, err := exec.Command("/usr/sbin/iptables", tables...).Output()
+
+		for _, table := range iptables {
+			_, err = io.WriteString(f, table)
 			if err != nil {
 				return err
 			}
+			f.WriteString("\n")
+		}
+		f.WriteString("\n")
 
+		_, err = exec.Command("sh", "-c", "/etc/init.d/firewall restart").Output()
+		if err != nil {
+			return errors.New(fmt.Sprintf(`step 8: firewall restart failed: %s`, err.Error()))
 		}
 	}
 	return nil
