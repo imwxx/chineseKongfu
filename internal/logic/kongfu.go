@@ -304,7 +304,18 @@ func (i *kongfu) WriteDomainsList(raw []string, fileName, dnsmasqd, dnsserver st
 	}
 	defer f.Close()
 
+	rawMap := make(map[string]string)
 	for _, domain := range raw {
+		rawMap[domain] = domain
+	}
+	for _, add := range address {
+		domain := strings.Split(add, "/")[1]
+		if _, ok := rawMap[domain]; ok {
+			delete(rawMap, domain)
+		}
+	}
+
+	for _, domain := range rawMap {
 		server := fmt.Sprintf(`server=/%s/%s#%d`, domain, dnsserver, dnsPort)
 		_, err = io.WriteString(f, server)
 		if err != nil {
